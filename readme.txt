@@ -3,10 +3,10 @@ Plugin Name: Recently Edited Content Widget
 Contributors: webdeveric
 Author URI: http://webdeveric.com/
 Plugin URI: http://phplug.in/
-Tags: dashboard, widget, edited, post types
+Tags: dashboard, widget, dashboard widget, edited, post types, recent content, recently edited, user preferences
 Requires at least: 3.0.0
-Tested up to: 3.8
-Stable tag: 0.2.8
+Tested up to: 3.8.1
+Stable tag: 0.2.11
 
 This plugin provides a dashboard widget that lists recently edited content for quick access.
 
@@ -30,6 +30,18 @@ Options (per user settings):
 
 == Changelog ==
 
+= 0.2.11 =
+* Updated layout and styles.
+* Updated empty featured image box styles to use a color from the user's admin color scheme.
+
+= 0.2.10 =
+* Updated styles.
+* Began using Grunt and SASS/Compass.
+* Added action links like what is on the edit posts screen.
+
+= 0.2.9 =
+* Fixed PHP warning when WP_DEBUG is true.
+
 = 0.2.8 =
 * Updated html input type number to have min and max attributes.
 
@@ -49,7 +61,7 @@ Options (per user settings):
 
 = 0.2.3 =
 * Rewrote configuration options - new options, saved per user.
-* Updated CSS - added post status bg images
+* Updated CSS - added post status bg images.
 
 = 0.1 =
 * Initial build of plugin. Nothing fancy.

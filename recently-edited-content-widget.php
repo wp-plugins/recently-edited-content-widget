@@ -2,41 +2,16 @@
 /*
 Plugin Name: Recently Edited Content Widget
 Plugin URI: http://phplug.in/
+Plugin Group: Dashboard Widgets
 Author: Eric King
 Author URI: http://webdeveric.com/
 Description: This plugin provides a dashboard widget that shows content you have modified recently.
-Version: 0.2.8
+Version: 0.2.11
 */
 
-if( ! function_exists('ellipsis') ){
-	function ellipsis( $str,$max_len,$ellipsis="&hellip;" ){
-		$str = trim( $str );
-		$str_len=strlen( $str );
-		if( $str_len<=$max_len ){
-			return $str;
-		} else {
-			$ellipsis_len=strlen( $ellipsis );
-			if( $ellipsis == '&hellip;' || $ellipsis == '&#8230;' )
-				$ellipsis_len = 2;
-			return substr( $str, 0, $max_len-$ellipsis_len ).$ellipsis;
-		}
-	}
-}
-
-if( ! function_exists('ellipsis_words') ){
-	/**
-		This is similar to ellipsis() but it doesn't count string length. It uses word counts instead.
-	*/
-	function ellipsis_words( $str, $max_words, $ellipsis="&hellip;" ){
-		$str = trim( $str );
-		$words = preg_split('/\s+/', $str );
-		if( count( $words ) <= $max_words )return $str;
-		return implode(' ', array_slice( $words, 0 , $max_words ) ) . $ellipsis;
-	}
-}
-
-
 class RECW_Dashboard_Widget {
+
+	const VERSION		= '0.2.11';
 
 	const WIDGET_ID		= 'recently-edited-content';
 	const WIDGET_TITLE	= 'Recent Content';
@@ -73,12 +48,19 @@ class RECW_Dashboard_Widget {
 		delete_metadata( 'user', 0, self::USER_META_KEY, '', true );
 	}
 
+	public static function excerpt_length( $length ){
+		return isset( self::$options, self::$options['excerpt_length'] ) ? self::$options['excerpt_length'] : $length;
+	}
+
+	public static function excerpt_more( $more ){
+		return self::$options['excerpt_length'] > 0 ? '&hellip;' : '';
+	}
+
 	public static function display(){
 
 		self::load_options();
 
 		global $post;
-		$old_post = $post;
 
 		$get_posts_args = array(
 			'suppress_filters' => true,
@@ -86,7 +68,8 @@ class RECW_Dashboard_Widget {
 			'post_status' => array_keys( self::$options['post_status'] ),
 			'posts_per_page' => self::$options['num_items'],
 			'orderby' => 'modified',
-			'order' => 'DESC'
+			'order' => 'DESC',
+			// 'perm' => 'edit_posts'
 		);
 
 		if( self::$options['current_user_only'] == true ){
@@ -94,58 +77,113 @@ class RECW_Dashboard_Widget {
 			$get_posts_args['meta_value'] = get_current_user_id();
 		}
 
-		$posts = new WP_Query( $get_posts_args );
+		$recent_content = new WP_Query( $get_posts_args );
 
-		if( isset( $posts ) && $posts->have_posts() ){
+		if( isset( $recent_content ) && $recent_content->have_posts() ){
 			$list = array();
 			$even = false;
-			
-			// dump( $posts->posts );
-			
-			foreach ( $posts->posts as $p ){
-				setup_postdata( $p );
 
-				$url = $p->post_status == 'trash' ? add_query_arg('post', $p->ID, 'edit.php?post_status=trash&post_type=post') : get_edit_post_link( $p->ID );
-				$title = _draft_or_post_title( $p->ID );
-				$excerpt = self::$options['excerpt_length'] > 0 ? get_the_excerpt() : '';
+			add_filter( 'excerpt_length', array( __CLASS__, 'excerpt_length'), PHP_INT_MAX );
+			add_filter( 'excerpt_more', array( __CLASS__, 'excerpt_more'), PHP_INT_MAX );
+
+			while( $recent_content->have_posts() ):
 				
-				if( $img_excerpt = ( $p->post_type == 'attachment' && $excerpt == '' ) ){
-					// $excerpt = sprintf('<a href="%s" target="_blank">View file: %s</a>', $p->guid, $p->post_title );
+				$recent_content->the_post();
 
-					$tn_url = wp_get_attachment_thumb_url( $p->ID );
-					$excerpt = sprintf('<img src="%1$s" alt="%2$s" title="%2$s" />', $tn_url, $p->post_title );
+				$permalink	= get_permalink();
+				$post_title	= get_the_title();
+
+				if( $user_can_edit = current_user_can( 'edit_post', $post->ID ) ){
+					$post_title_link_title = sprintf( __( 'Edit &#8220;%s&#8221;' ), esc_attr( $post_title ) );
+					$url = $post->post_status == 'trash' ? add_query_arg('post', get_the_ID(), 'edit.php?post_status=trash&post_type=post') : get_edit_post_link( get_the_ID() );
+					$post_title = sprintf('<a href="%s" title="%s">%s</a>', $url, $post_title_link_title, esc_html( $post_title ) );
+				} else {
+					// $post_title = sprintf('<span class="post-title">%s</span>', esc_html( $post_title ) );
+					$post_title = esc_html( $post_title );
 				}
 
-				$author_id = $p->post_author;
+				$post_status = $post->post_status == 'publish' ? 'published' : $post->post_status;
 
-				if ( $last_id = get_post_meta( $p->ID, '_edit_last', true ) ){
+				$publish_date = date_i18n('M jS, Y \a\t g:i A', strtotime( $post->post_modified ) );
+				$publish_date_datetime = mysql2date('c', $post->post_modified );
+
+				$excerpt = wpautop( get_the_excerpt() );
+				$author_id = $post->post_author;
+
+				if( $last_id = get_post_meta( get_the_ID(), '_edit_last', true ) ){
 					$author_id = $last_id;
 					unset( $last_id );
 				}
 
-				$author = get_userdata( $author_id )->display_name;
-				unset( $author_id );
+				$author_name = get_userdata( $author_id )->display_name;
+				$author = current_user_can('edit_users') ? sprintf('<a href="%1$s" title="Edit %2$s">%2$s</a>', get_edit_user_link( $author_id), $author_name ) : $author_name;
+				$author = sprintf('<cite>%s</cite>', $author );
 
-				$item = "<h4 class='post-title'><a href='$url' title='" . sprintf( __( 'Edit &#8220;%s&#8221;' ), esc_attr( $title ) ) . "'>" . esc_html($title) . '</a> <span class="post-meta"><span class="post-editor">Edited by ' . $author . '</span> on <time class="publish-date" datetime="' . mysql2date('c', $p->post_modified ) . '">' . mysql2date('l, F jS, Y \a\t g:i A', $p->post_modified ) . '</time></span></h4>';
+				unset( $author_id, $author_name );
 
-				if( $img_excerpt ){
-					$item .= $excerpt;
-				} elseif( isset( $excerpt ) && $excerpt != '' ){
-					$item .= wpautop( ellipsis_words( strip_tags( $excerpt, '<p><em><strong><i><b>'), self::$options['excerpt_length'], '&hellip;' ) );
-				} else {
+				$even_odd = $even ? 'even' : 'odd';
+				$even = !$even;
 
+				$thumbnail_url = wp_get_attachment_image_src( get_post_thumbnail_id( $post->ID ) );
+
+				if( $thumbnail_url !== false )
+					list( $thumbnail_url ) = $thumbnail_url;
+
+				switch( true ){
+					case $thumbnail_url !== false && $user_can_edit:
+						$thumbnail = sprintf('<a href="%s" class="thumbnail" style="background-image: url(%s);"></a>', $url, $thumbnail_url );
+					break;
+					case $thumbnail_url !== false && ! $user_can_edit:
+						$thumbnail = sprintf('<div class="thumbnail" style="background-image: url(%s);"></div>', $thumbnail_url );
+					break;
+					case $thumbnail_url === false && $user_can_edit:
+						$thumbnail = sprintf('<a href="%s" class="thumbnail empty"></a>', $url );
+					break;
+					// case $thumbnail_url === false && ! $user_can_edit:
+					default:
+						$thumbnail = '<div class="thumbnail empty"></div>';
 				}
 
-				$list[] = sprintf('<div class="dashboard-recw-item %4$s %1$s post-type-%3$s" data-posttype="%3$s" data-status="%4$s">%2$s</div>', $even ? 'even' : 'odd', $item, $p->post_type, $p->post_status );
-				$even = ! $even;
-			}
-	?>
-		<ul>
-			<li><?php echo join( "</li>\n<li>", $list ); ?></li>
-		</ul>
-	<?php
+				$actions = self::get_action_links();
+
+$list[]=<<<ITEM
+
+<div class="dashboard-recw-item {$post->post_status} {$even_odd} post-type-{$post->post_type}">
+	{$thumbnail}
+	<div class="dashboard-recw-item-wrap">
+
+		<h4 class="post-title">
+			{$post_title}
+			<span class="post-type-meta"><span class="meta-sep"> - </span><span class="post-type">{$post->post_type}</span><span class="meta-sep"> - </span><span class="post-state">{$post_status}</span></span>
+		</h4>
+
+		<div class="post-meta">
+			<span class="post-editor">Edited by {$author}</span> on <time class="publish-date" datetime="{$publish_date_datetime}">{$publish_date}</time>
+		</div>
+
+		{$excerpt}
+
+		{$actions}
+
+	</div>
+
+</div>
+
+ITEM;
+
+			endwhile;
+
+			wp_reset_query();
+
+			remove_filter( 'excerpt_length', array( __CLASS__, 'excerpt_length'), PHP_INT_MAX );
+			remove_filter( 'excerpt_more', array( __CLASS__, 'excerpt_more'), PHP_INT_MAX );	
+
+			echo implode( '', $list );
+
 		} else {
+
 			$message = '<p>There isn&#8217;t any recently edited content in the system.</p>';
+
 			if( self::$options['current_user_only'] == true ){
 				global $wpdb;
 				$num_posts = $wpdb->get_var('select count(*) from ' . $wpdb->posts );
@@ -155,10 +193,66 @@ class RECW_Dashboard_Widget {
 					$message .= '<p>It looks like you have a new site or have just imported your data. Started editing your content to have it show up here.</p>';
 			}
 
-			printf('<div class="dashboard-recw-item" data-posttype="notice" data-status="no content">%s</div>', __( $message ) );
+			printf('<div class="dashboard-recw-notice">%s</div>', __( $message ) );
 
 		}
-		$post = $old_post;
+
+	}
+
+	public static function get_admin_color( $index = 0, $default_color = '#333' ){
+		static $colors = null;
+		if( ! isset( $colors ) ){
+			global $wp_styles, $_wp_admin_css_colors;
+			$color_scheme = get_user_option( 'admin_color' );
+			if( isset( $color_scheme ) && $color_scheme !== false && $color_scheme != '' )
+				$colors = $_wp_admin_css_colors[ $color_scheme ]->colors;
+		}
+		return isset( $colors[ $index ] ) ? $colors[ $index ] : $default_color;
+	}
+
+	public static function get_action_links(){
+
+		global $post;
+		$edit_link = get_edit_post_link( $post->ID );
+		$title = _draft_or_post_title();
+		$post_type_object = get_post_type_object( $post->post_type );
+		$can_edit_post = current_user_can( 'edit_post', $post->ID );
+
+		$actions = array();
+
+		if( $can_edit_post && 'trash' != $post->post_status ){
+			$actions['edit'] = '<a href="' . get_edit_post_link( $post->ID, true ) . '" title="' . esc_attr( __( 'Edit this item' ) ) . '">' . __( 'Edit' ) . '</a>';
+		}
+
+		if( current_user_can( 'delete_post', $post->ID ) ){
+			if( 'trash' == $post->post_status )
+				$actions['untrash'] = "<a title='" . esc_attr( __( 'Restore this item from the Trash' ) ) . "' href='" . wp_nonce_url( admin_url( sprintf( $post_type_object->_edit_link . '&amp;action=untrash', $post->ID ) ), 'untrash-post_' . $post->ID ) . "'>" . __( 'Restore' ) . "</a>";
+			elseif( EMPTY_TRASH_DAYS )
+				$actions['trash'] = "<a class='submitdelete' title='" . esc_attr( __( 'Move this item to the Trash' ) ) . "' href='" . get_delete_post_link( $post->ID ) . "'>" . __( 'Trash' ) . "</a>";
+			if( 'trash' == $post->post_status || !EMPTY_TRASH_DAYS )
+				$actions['delete'] = "<a class='submitdelete' title='" . esc_attr( __( 'Delete this item permanently' ) ) . "' href='" . get_delete_post_link( $post->ID, '', true ) . "'>" . __( 'Delete' ) . "</a>";
+		}
+
+		if( $post_type_object->public ){
+			if( in_array( $post->post_status, array( 'pending', 'draft', 'future' ) ) ){
+				if( $can_edit_post )
+					$actions['view'] = '<a href="' . esc_url( apply_filters( 'preview_post_link', set_url_scheme( add_query_arg( 'preview', 'true', get_permalink( $post->ID ) ) ) ) ) . '" title="' . esc_attr( sprintf( __( 'Preview &#8220;%s&#8221;' ), $title ) ) . '" rel="permalink">' . __( 'Preview' ) . '</a>';
+			} elseif( 'trash' != $post->post_status ){
+				$actions['view'] = '<a href="' . get_permalink( $post->ID ) . '" title="' . esc_attr( sprintf( __( 'View &#8220;%s&#8221;' ), $title ) ) . '" rel="permalink">' . __( 'View' ) . '</a>';
+			}
+		}
+
+		$actions = apply_filters( is_post_type_hierarchical( $post->post_type ) ? 'page_row_actions' : 'post_row_actions', $actions, $post );
+
+		if( empty( $actions ) )
+			return '';
+
+		$action_links = array();
+		foreach ( $actions as $action => $link ){
+			$action_links[] = sprintf('<span class="%s">%s</span>', $action, $link );
+		}
+
+		return '<p class="row-actions">' . implode('|', $action_links ) . '</p>';
 	}
 
 	public static function config( $empty_str = '', $config = array() ){
@@ -166,7 +260,7 @@ class RECW_Dashboard_Widget {
 
 		self::load_options();
 
-		if ( 'POST' == $_SERVER['REQUEST_METHOD'] && isset( $_POST[ $form_id ] ) ){
+		if( 'POST' == $_SERVER['REQUEST_METHOD'] && isset( $_POST[ $form_id ] ) ){
 
 			foreach( self::$fields as $option_name => $opt ){
 
@@ -270,6 +364,8 @@ class RECW_Dashboard_Widget {
 		if( ! ( current_user_can( 'edit_posts' ) || current_user_can( 'edit_others_posts' ) ) )
 			return;
 
+		add_action( 'admin_head-index.php', array( __CLASS__, 'admin_head' ) );
+
 		self::$fields = array(
 			'num_items' => array(
 				'type'	=> 'int',
@@ -335,24 +431,24 @@ class RECW_Dashboard_Widget {
 			)
 		);
 
-		wp_add_dashboard_widget( self::WIDGET_ID, self::WIDGET_TITLE, array( __CLASS__, 'display'), array( __CLASS__, 'config') );
-		wp_register_style( 'RECW_css', plugins_url('css/recw.css', __FILE__) );
-		wp_enqueue_style( 'RECW_css' );
+		wp_add_dashboard_widget( self::WIDGET_ID, self::WIDGET_TITLE, array( __CLASS__, 'display' ), array( __CLASS__, 'config' ) );
+		wp_enqueue_style( 'recw', plugins_url( '/css/dist/recently-edited-content-widget.min.css', __FILE__ ), array(), self::VERSION );
 	}
 
+	public static function admin_head(){
+		printf('<style>#recently-edited-content .inside .dashboard-recw-item .thumbnail.empty{background-color:%s;}</style>', self::get_admin_color( 3 ) );
+	}
 
 	public static function activate(){
 		self::load_options( true );
 	}
-
 
 	public static function deactivate(){
 		self::remove_options();
 	}
 
 }
-add_action('wp_dashboard_setup', array('RECW_Dashboard_Widget', 'init') );
 
-register_activation_hook( __FILE__, array('RECW_Dashboard_Widget', 'activate' ) );
-
-register_deactivation_hook( __FILE__, array('RECW_Dashboard_Widget', 'deactivate' ) );
+add_action( 'wp_dashboard_setup',		array( 'RECW_Dashboard_Widget', 'init' ) );
+register_activation_hook( __FILE__,		array( 'RECW_Dashboard_Widget', 'activate' ) );
+register_deactivation_hook( __FILE__,	array( 'RECW_Dashboard_Widget', 'deactivate' ) );
