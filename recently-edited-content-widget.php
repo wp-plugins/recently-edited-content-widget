@@ -6,12 +6,12 @@ Plugin Group: Dashboard Widgets
 Author: Eric King
 Author URI: http://webdeveric.com/
 Description: This plugin provides a dashboard widget that shows content you have modified recently.
-Version: 0.2.12
+Version: 0.2.13
 */
 
 class RECW_Dashboard_Widget {
 
-	const VERSION		= '0.2.12';
+	const VERSION		= '0.2.13';
 
 	const WIDGET_ID		= 'recently-edited-content';
 	const WIDGET_TITLE	= 'Recent Content';
@@ -62,6 +62,8 @@ class RECW_Dashboard_Widget {
 
 		global $post;
 
+		$wp_version = get_bloginfo('version');
+
 		$get_posts_args = array(
 			'suppress_filters' => true,
 			'post_type' => array_keys( self::$options['post_types'] ),
@@ -71,6 +73,11 @@ class RECW_Dashboard_Widget {
 			'order' => 'DESC',
 			// 'perm' => 'edit_posts'
 		);
+
+		// Prior to WP 3.2, the post_status argument was assumed to be a string.
+		if( version_compare( $wp_version, '3.2', '<' ) ){
+			$get_posts_args['post_status'] = implode(',', $get_posts_args['post_status'] );
+		}
 
 		if( self::$options['current_user_only'] == true ){
 			$get_posts_args['meta_key'] = '_edit_last';
@@ -86,7 +93,7 @@ class RECW_Dashboard_Widget {
 			add_filter( 'excerpt_length', array( __CLASS__, 'excerpt_length'), PHP_INT_MAX );
 			add_filter( 'excerpt_more', array( __CLASS__, 'excerpt_more'), PHP_INT_MAX );
 
-			$dashicons_class = version_compare( get_bloginfo('version'), '3.8', '>=' ) ? 'has-dashicons' : 'no-dashicons';
+			$dashicons_class = version_compare( $wp_version, '3.8', '>=' ) ? 'has-dashicons' : 'no-dashicons';
 
 			while( $recent_content->have_posts() ):
 				
@@ -118,7 +125,7 @@ class RECW_Dashboard_Widget {
 				}
 
 				$author_name = get_userdata( $author_id )->display_name;
-				$author = current_user_can('edit_users') ? sprintf('<a href="%1$s" title="Edit %2$s">%2$s</a>', get_edit_user_link( $author_id), $author_name ) : $author_name;
+				$author = current_user_can('edit_users') && function_exists(' get_edit_user_link') ? sprintf('<a href="%1$s" title="Edit %2$s">%2$s</a>', get_edit_user_link( $author_id), $author_name ) : $author_name;
 				$author = sprintf('<cite>%s</cite>', $author );
 
 				unset( $author_id, $author_name );
@@ -236,9 +243,13 @@ ITEM;
 		}
 
 		if( $post_type_object->public ){
-			if( in_array( $post->post_status, array( 'pending', 'draft', 'future' ) ) ){
-				if( $can_edit_post )
-					$actions['view'] = '<a href="' . esc_url( apply_filters( 'preview_post_link', set_url_scheme( add_query_arg( 'preview', 'true', get_permalink( $post->ID ) ) ) ) ) . '" title="' . esc_attr( sprintf( __( 'Preview &#8220;%s&#8221;' ), $title ) ) . '" rel="permalink">' . __( 'Preview' ) . '</a>';
+			if( in_array( $post->post_status, array( 'pending', 'auto-draft', 'draft', 'future' ) ) ){
+				if( $can_edit_post ){
+					$preview_url = add_query_arg( 'preview', 'true', get_permalink( $post->ID ) );
+					if( function_exists('set_url_scheme') )
+						$preview_url = set_url_scheme( $preview_url );
+					$actions['view'] = '<a href="' . esc_url( apply_filters( 'preview_post_link', $preview_url ) ) . '" title="' . esc_attr( sprintf( __( 'Preview &#8220;%s&#8221;' ), $title ) ) . '" rel="permalink">' . __( 'Preview' ) . '</a>';
+				}
 			} elseif( 'trash' != $post->post_status ){
 				$actions['view'] = '<a href="' . get_permalink( $post->ID ) . '" title="' . esc_attr( sprintf( __( 'View &#8220;%s&#8221;' ), $title ) ) . '" rel="permalink">' . __( 'View' ) . '</a>';
 			}
@@ -310,13 +321,16 @@ ITEM;
 					if( isset( $opt['values'] ) ){
 						$checkboxes = array();
 						foreach( $opt['values'] as $name => $label ){
-							//printf('<pre>%s</pre>', print_r( $post_type, true ) );
+
+							$opt_checked = isset( self::$options[ $option_name ][ $name ] ) ? self::$options[ $option_name ][ $name ] : 0;
+
 							$checkboxes[] = sprintf(
 								'<label><input id="' . self::WIDGET_ID . '-' . $option_name . '" name="'.$form_id.'[' . $option_name . '][' . $name . ']" type="' . $opt['input'] . '" value="%s" %s /> %s</label>',
 								true,
-								checked( self::$options[ $option_name ][ $name ], true, false ),
+								checked( $opt_checked, true, false ),
 								$label
 							);
+
 						}
 						echo '<ul><li>' . implode('</li><li>', $checkboxes ) . '</li></ul>';
 					} else {
@@ -427,6 +441,7 @@ ITEM;
 					'publish'	=> true,
 					'pending'	=> true,
 					'draft'		=> true,
+					//'auto-draft'=> true,
 					'future'	=> true,
 					'private'	=> true,
 					'trash'		=> true
